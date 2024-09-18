@@ -42,16 +42,9 @@ Valid options are:
     -s, --ipset <ipset_name>
                 Ipset name for the GfwList domains
                 (If not given, ipset rules will not be generated.)
-    -4, --nftset4 <nftset_path>
-                IPv4 nftset path for the GfwList domains
+    -n, --nftset <nftset_path>
+                Nftset path for the GfwList domains
                 This option does not create normal rules
-                Can be combined with "-6, --nftset6"
-    -4f, --4file Specify the output file path for "-4, --nftset4"
-    -6, --nftset6 <nftset_path>
-                IPv6 nftset path for the GfwList domains
-                This option does not create normal rules
-                Can be combined with "-4, --nftset4"
-    -6f, --6file Specify the output file path for "-6, --nftset6"
     -o, --output <FILE>
                 /path/to/output_filename
     -i, --insecure
@@ -129,11 +122,10 @@ get_args() {
     DNS_IP='127.0.0.1'
     DNS_PORT='5353'
     IPSET_NAME=''
+    NFTSET_PATH=''
     CURL_EXTARG=''
     WGET_EXTARG=''
     WITH_IPSET=0
-    NFTSET4=0
-    NFTSET6=0
     EXTRA_DOMAIN_FILE=''
     EXCLUDE_DOMAIN_FILE=''
     IPV4_PATTERN='^((2[0-4][0-9]|25[0-5]|[01]?[0-9][0-9]?)\.){3}(2[0-4][0-9]|25[0-5]|[01]?[0-9][0-9]?)$'
@@ -163,24 +155,9 @@ get_args() {
             IPSET_NAME="$2"
             shift
             ;;
-        --nftset4 | -4)
-            NFTSET4_PATH="$2"
+        --nftset | -n)
+            NFTSET_PATH="$2"
             OUT_TYPE='NFTSET_RULES'
-            NFTSET4=1
-            shift
-            ;;
-        --4file | -4f)
-            NFTSET4_OUTFILE="$2"
-            shift
-            ;;
-        --nftset6 | -6)
-            NFTSET6_PATH="$2"
-            OUT_TYPE='NFTSET_RULES'
-            NFTSET6=1
-            shift
-            ;;
-        --6file | -6f)
-            NFTSET6_OUTFILE="$2"
             shift
             ;;
         --output | -o)
@@ -204,13 +181,11 @@ get_args() {
     done
 
     # Check path & file name
-    if [ $OUT_TYPE = 'DOMAIN_LIST' ]; then
-        if [ -z "$OUT_FILE" ]; then
-            _red 'Error: missing output file path. Did you forget an argument for other options?\n'
-            exit 1
-        else
-            check_filepath "$OUT_FILE"
-        fi
+    if [ -z "$OUT_FILE" ]; then
+        _red 'Error: missing output file path. Or did you forget an argument for other options?\n'
+        exit 1
+    else
+        check_filepath "$OUT_FILE"
     fi
 
     if [ $OUT_TYPE = 'DNSMASQ_RULES' ]; then
@@ -243,29 +218,9 @@ get_args() {
     fi
 
     if [ $OUT_TYPE = 'NFTSET_RULES' ]; then
-        if [ $NFTSET4 -eq 1 ]; then
-            if [ -z "$NFTSET4_PATH" ]; then
-                _red 'Error: missing IPv4 nftset path.\n'
-                exit 1
-            fi
-            if [ -z "$NFTSET4_OUTFILE" ]; then
-                _red 'Error: missing IPv4 nftset output file path.\n'
-                exit 1
-            else
-                check_filepath "$NFTSET4_OUTFILE"
-            fi
-        fi
-        if [ $NFTSET6 -eq 1 ]; then
-            if [ -z "$NFTSET6_PATH" ]; then
-                _red 'Error: missing IPv6 nftset path.\n'
-                exit 1
-            fi
-            if [ -z "$NFTSET6_OUTFILE" ]; then
-                _red 'Error: missing IPv6 nftset output file path.\n'
-                exit 1
-            else
-                check_filepath "$NFTSET6_OUTFILE"
-            fi
+        if [ -z "$NFTSET_PATH" ]; then
+            _red 'Error: missing nftset path.\n'
+            exit 1
         fi
     fi
 
@@ -334,8 +289,13 @@ process() {
 
     # Delete exclude domains
     if [ -n "$EXCLUDE_DOMAIN_FILE" ]; then
-        printf 'Domains in exclude domain file %s... ' "$EXCLUDE_DOMAIN_FILE"
-        grep -vF -f "$EXCLUDE_DOMAIN_FILE" "$DOMAIN_TEMP_FILE" >"$DOMAIN_FILE" && _green 'Deleted\n'
+        printf 'Filtering out excluded domains from %s... ' "$EXCLUDE_DOMAIN_FILE"
+        if grep -vF -f "$EXCLUDE_DOMAIN_FILE" "$DOMAIN_TEMP_FILE" >"$DOMAIN_FILE"; then
+            _green 'Done\n'
+        else
+            _red 'Error\n'
+            exit 1
+        fi
     else
         cat "$DOMAIN_TEMP_FILE" >"$DOMAIN_FILE"
     fi
@@ -368,19 +328,11 @@ ipset=/\1/'$IPSET_NAME'#g' >$CONF_TMP_FILE
     fi
 
     if [ $OUT_TYPE = 'NFTSET_RULES' ]; then
-        if [ $NFTSET4 -eq 1 ]; then
-            printf 'Creating IPv4 nftset rules...\n'
-            sort -u "$DOMAIN_FILE" | $SED_ERES 's|(.+)|nftset=/\1/4#'$NFTSET4_PATH'|g' >"$OUT_TMP_FILE"
-            cp "$OUT_TMP_FILE" "$NFTSET4_OUTFILE"
-        fi
-        if [ $NFTSET6 -eq 1 ]; then
-            printf 'Creating IPv6 nftset rules...\n'
-            sort -u "$DOMAIN_FILE" | $SED_ERES 's|(.+)|nftset=/\1/6#'$NFTSET6_PATH'|g' >"$OUT_TMP_FILE"
-            cp "$OUT_TMP_FILE" "$NFTSET6_OUTFILE"
-        fi
-    else
-        cp "$OUT_TMP_FILE" "$OUT_FILE"
+        printf 'Creating nftset rules...\n'
+        sort -u "$DOMAIN_FILE" | $SED_ERES 's|(.+)|nftset=/\1/4#'"$NFTSET_PATH"'4,6#'"$NFTSET_PATH"'6|g' >"$OUT_TMP_FILE"
     fi
+
+    cp "$OUT_TMP_FILE" "$OUT_FILE"
 
     printf '\nConverting GfwList to %s... ' "$OUT_TYPE" && _green 'Done\n\n'
 
