@@ -290,7 +290,7 @@ process() {
     # Delete exclude domains
     if [ -n "$EXCLUDE_DOMAIN_FILE" ]; then
         printf 'Filtering out excluded domains from %s... ' "$EXCLUDE_DOMAIN_FILE"
-        if grep -vF -f "$EXCLUDE_DOMAIN_FILE" "$DOMAIN_TEMP_FILE" >"$DOMAIN_FILE"; then
+        if awk 'NR==FNR{a[$1]; next} !($NF in a)' "$EXCLUDE_DOMAIN_FILE" "$DOMAIN_TEMP_FILE" >"$DOMAIN_FILE"; then
             _green 'Done\n'
         else
             _red 'Error\n'
